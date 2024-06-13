@@ -1,0 +1,147 @@
+SQL II
+
+
+CREATE OR REPLACE VIEW WORKSPACE_SWETHA.PUBLIC.temp_view_1 AS (
+
+WITH 
+    
+-- 1. 
+    
+extracted_users AS (
+      SELECT USER_ID::int as USER_ID, 
+             created_at::date as user_sign_up_date,
+             DATE_TRUNC('week', created_at)::date as user_signup_week
+      FROM  SQLII.RAW_DATA.USERS
+),
+
+extracted_rx_orders AS (
+      SELECT *
+      FROM SQLII.RAW_DATA.RX_ORDERS
+),
+
+extracted_appointments as (
+    SELECT *
+    FROM SQLII.RAW_DATA.APPOINTMENTS
+    WHERE USER_ID is NOT null -- remove invalid records
+),
+
+-- 2. De-duplicated Appointments
+    
+appointment_status_ranked as (
+      SELECT *,
+             ROW_NUMBER() OVER (PARTITION BY user_id, appointment_date 
+                                ORDER BY created_date DESC) AS rn -- the most recent row with latest status for each appointment
+      FROM extracted_appointments
+),
+    
+latest_appointment_status as (
+      SELECT *
+      FROM appointment_status_ranked
+      WHERE rn = 1
+),
+    
+-- 3. Finding the first Completed Appointment
+first_appointments AS (
+      SELECT user_id, 
+    	     min(appointment_date) as first_appointment_completed_date
+      FROM latest_appointment_status -- using the CTE you created above
+      WHERE appointment_status = 'Completed'
+      GROUP BY user_id
+),
+
+-- 4. Finding the first Prescription Order after the completed appointment
+
+-- 4.1
+ranked_orders AS (
+    	SELECT *,
+    	    row_number() OVER (partition by user_id ORDER BY transaction_date, order_number) as rn,
+    	    DENSE_RANK() over (partition by user_id order by transaction_date, order_number) AS dr,
+    	    RANK() OVER (PARTITION BY user_id ORDER BY transaction_date, order_number) AS r
+    	FROM extracted_rx_orders
+),
+
+-- 4.2
+first_orders as (
+        select user_id, 
+               order_number as first_rx_order_number,
+               transaction_date as first_rx_order_date,
+               sum(item_amount) as first_order_value
+        from ranked_orders
+        where dr = 1
+        group by user_id, 
+               order_number,
+               transaction_date
+),
+
+
+
+
+
+	
+
+-- 5: Combining Insights
+
+-- 5.1 Users + Appointments + Orders
+
+with_orders as (
+  SELECT extracted_users.user_id,
+         extracted_users.user_sign_up_date,
+         extracted_users.user_signup_week,
+         first_appointments.first_appointment_completed_date,
+         first_orders.first_rx_order_number,
+         first_orders.first_order_value,
+         first_orders.first_rx_order_date
+  FROM extracted_users
+  left join first_appointments on first_appointments.user_id = extracted_users.user_id
+  left join first_orders on first_orders.user_id = first_appointments.user_id
+),
+
+-- 5.2 Summary  
+
+final as (
+    select user_id, 
+		   user_sign_up_date,
+           user_signup_week,
+           datediff('day',user_sign_up_date,first_appointment_completed_date) as first_appointment_tat,
+           first_appointment_completed_date,
+           datediff('day',first_appointment_completed_date,first_rx_order_date) as first_rx_order_tat,
+           first_rx_order_number,
+           first_rx_order_date
+    from with_orders
+)
+select * 
+from final
+order by 1
+);
+
+
+
+CREATE OR REPLACE VIEW WORKSPACE_SWETHA.PUBLIC.first_user_journey_weekly AS (
+	
+	select user_signup_week, 
+	       count(user_id) as users_signed_up,
+	       avg(first_appointment_tat) as avg_days_to_first_appointment,
+	       avg(first_rx_order_tat) as avg_days_to_first_rx_order,
+	       count(first_appointment_tat) / count(*) as pct_users_with_appointment,
+	       count(first_rx_order_number) / count(*) as pct_users_with_rx_order,
+	from WORKSPACE_SWETHA.PUBLIC.temp_view_1 
+	group by user_signup_week
+    order by 1 desc	
+);
+
+
+CREATE OR REPLACE VIEW WORKSPACE_SWETHA.PUBLIC.first_user_journey_monthly AS (
+  SELECT 
+    TO_CHAR(user_sign_up_date, 'YYYY-MM') AS signup_month,
+    COUNT(user_id) AS users_signed_up,
+    AVG(first_appointment_tat) AS avg_days_to_first_appointment,
+    AVG(first_rx_order_tat) AS avg_days_to_first_rx_order,
+    COUNT(first_appointment_tat) * 1.0 / COUNT(user_id) AS pct_users_with_appointment,
+    COUNT(first_rx_order_tat) * 1.0 / COUNT(user_id) AS pct_users_with_rx_order,
+  FROM 
+    WORKSPACE_SWETHA.PUBLIC.temp_view_1
+  GROUP BY 
+    TO_CHAR(user_sign_up_date, 'YYYY-MM')
+  ORDER BY 
+    signup_month DESC
+);
