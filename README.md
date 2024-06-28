@@ -1,9 +1,9 @@
 # HealthTech---GlowRex-Company
 
-Introduction
+Introduction:
 The primary goal of this project is to analyze the user journey within our skincare app, from the initial signup to the first appointment and first prescription order. By understanding these user interactions, the final report aims to provide insights that will help the company enhance user engagement, optimize service delivery, and increase overall revenue. This report is crucial for identifying bottlenecks in the user journey, understanding user behavior patterns, and making data-driven decisions to improve the user experience and operational efficiency.
 
-Methodology
+Methodology:
 Data Collection
 Data was extracted from multiple tables in the company's database, including user signup data, appointment records, and prescription orders. The primary tables used were:
 
